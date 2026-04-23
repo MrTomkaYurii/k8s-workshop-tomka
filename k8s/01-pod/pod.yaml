@@ -1,0 +1,189 @@
+# =============================================================================
+# pod.yaml — "Голий" Pod без контролера
+# =============================================================================
+#
+# ЩО ЦЕ: Pod — найменша одиниця розгортання в Kubernetes.
+#         Обгортка навколо одного або кількох контейнерів, що поділяють
+#         мережу (спільна IP), диски (Volumes) і lifecycle.
+#
+# НАВІЩО ЦЕЙ ФАЙЛ: Демонстрація що "голий" Pod не відновлюється після
+#         видалення — на відміну від Pod'ів під управлінням Deployment.
+#
+#     ДЕМО: kubectl delete pod weather-pod → Pod зникає назавжди
+#           Порівняти з Deployment у наступному уроці
+#
+#     АНТИПАТЕРН: В production ніколи не використовуй голі Pod'и!
+#     Завжди використовуй Deployment, StatefulSet або Job.
+#     Причина: немає автовідновлення, немає rolling updates, немає scaling.
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f pod.yaml          # Створити
+#   kubectl get pods                   # Перевірити стан
+#   kubectl describe pod weather-pod   # Детальна інформація
+#   kubectl delete pod weather-pod     # Видалити (ДЕМО)
+# =============================================================================
+
+apiVersion: v1    # Pod — базовий об'єкт, живе в core API (v1, не apps/v1)
+kind: Pod         # Тип Kubernetes об'єкту
+
+# ---------------------------------------------------------------------------
+# metadata — ідентифікація об'єкту
+# ---------------------------------------------------------------------------
+metadata:
+
+  name: weather-pod   # Ім'я Pod'у — унікальне в межах namespace
+                      # Правила іменування: a-z, 0-9, дефіс; макс 253 символи
+                      # НЕ робіть так: WeatherPod (верхній регістр заборонено)
+
+  namespace: default  # Namespace — логічне розділення кластеру
+                      # default — стандартний namespace, існує завжди
+                      # Для ізоляції команд/середовищ — різні namespaces
+                      # (детально вивчимо в Уроці 8)
+
+  # labels — довільні ключ:значення мітки
+  # ДУЖЕ ВАЖЛИВО: саме за labels Service знаходить "свої" Pod'и
+  # Можна фільтрувати: kubectl get pods -l app=weather-api
+  labels:
+    app: weather-api      # Назва застосунку (стандартна мітка)
+    version: "1.0"        # Версія (в лапках — YAML може сприйняти як число)
+    environment: dev      # Середовище розгортання
+    # Додаткові мітки — повністю на ваш розсуд:
+    # team: backend
+    # tier: frontend
+
+  # annotations — метадані для інструментів, не для селекторів
+  # На відміну від labels, не використовуються для пошуку/вибору Pod'ів
+  # Використовуються для: документації, конфігурації ingress, prometheus тощо
+  annotations:
+    description: "Тестовий Pod для демонстрації у Уроці 1"
+    # prometheus.io/scrape: "true"      # Prometheus буде збирати метрики
+    # prometheus.io/port: "8080"
+
+# ---------------------------------------------------------------------------
+# spec — бажаний стан Pod'у (що ми хочемо)
+# ---------------------------------------------------------------------------
+spec:
+
+  # containers — список контейнерів у Pod'і
+  # Зазвичай один контейнер; кілька — для sidecar патернів
+  containers:
+
+    - name: weather-api   # Ім'я контейнера — унікальне в межах Pod'у
+                          # Використовується в: kubectl logs <pod> -c weather-api
+
+      # image — Docker образ для запуску
+      # Формат: [registry/][namespace/]image[:tag]
+      # Якщо тег не вказано — буде взято :latest (НЕ рекомендується!)
+      # НЕ робіть так в production: image: myapp (без тегу = :latest = непередбачувано)
+      image: nginx:alpine  # Поки nginx — наш образ завантажимо в Уроці 2
+
+      # imagePullPolicy — коли завантажувати образ
+      # Always    — завжди завантажувати (навіть якщо є локально)
+      # IfNotPresent — завантажити тільки якщо немає локально (рекомендовано)
+      # Never     — ніколи не завантажувати (образ має бути вже на вузлі)
+      imagePullPolicy: IfNotPresent
+
+      # ports — документує які порти слухає контейнер
+      # НЕ ВІДКРИВАЄ порти! Це лише метадані для людей та інструментів
+      # Контейнер сам вирішує на яких портах слухати
+      ports:
+        - containerPort: 80   # nginx слухає на 80
+          name: http           # Ім'я порту — зручно для Service
+          protocol: TCP        # TCP (за замовчуванням) або UDP
+
+      # env — змінні середовища для контейнера
+      # Це основний спосіб передавати конфігурацію в контейнер
+      env:
+        - name: ASPNETCORE_ENVIRONMENT  # Ім'я змінної
+          value: "Development"           # Пряме значення
+
+        - name: ASPNETCORE_URLS          # На яких URL'ах слухає .NET
+          value: "http://+:80"
+
+        # Значення з ConfigMap (вивчимо в Уроці 4):
+        # - name: DATABASE_HOST
+        #   valueFrom:
+        #     configMapKeyRef:
+        #       name: weather-config    # Ім'я ConfigMap
+        #       key: database-host      # Ключ в ConfigMap
+
+        # Значення з Secret (вивчимо в Уроці 4):
+        # - name: DATABASE_PASSWORD
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: weather-secret    # Ім'я Secret
+        #       key: postgres-password  # Ключ в Secret
+
+      # resources — запити і ліміти ресурсів
+      # ОБОВ'ЯЗКОВО встановлювати в production!
+      # Без цього Scheduler не може правильно розподілити Pod'и
+      resources:
+
+        # requests — мінімум який гарантується Pod'у
+        # Scheduler використовує requests щоб вирішити куди поставити Pod
+        # Вузол обіцяє зарезервувати ці ресурси для Pod'у
+        requests:
+          memory: "64Mi"   # 64 мебібайти RAM — мінімальна гарантія
+          cpu: "50m"       # 50 мілікорів = 0.05 CPU ядра
+
+        # limits — жорстка стеля споживання ресурсів
+        # RAM: перевищення → процес вбивається (OOMKilled) — Pod падає
+        # CPU: перевищення → throttling (уповільнення, Pod НЕ падає)
+        # НЕ робіть так: limits << requests (K8s відхилить Pod)
+        limits:
+          memory: "128Mi"  # Максимум 128 МіБ RAM
+          cpu: "200m"      # Максимум 0.2 CPU ядра
+
+      # Liveness і Readiness проби — вивчимо детально в Уроці 5
+      # Зараз закоментовані щоб не ускладнювати перший Pod
+      #
+      # livenessProbe:   — чи живий контейнер? якщо ні → перезапустити
+      #   httpGet:
+      #     path: /health/live
+      #     port: 80
+      #   initialDelaySeconds: 10
+      #   periodSeconds: 10
+      #
+      # readinessProbe:  — чи готовий приймати трафік?
+      #   httpGet:
+      #     path: /health/ready
+      #     port: 80
+      #   initialDelaySeconds: 5
+      #   periodSeconds: 5
+
+  # restartPolicy — що робити якщо контейнер завершив роботу
+  #
+  # Always     → завжди перезапускати (для серверів/демонів — DEFAULT)
+  # OnFailure  → перезапускати тільки при ненульовому exit code (для Job)
+  # Never      → ніколи не перезапускати
+  #
+  #    ДЕМО: Ставимо Never щоб Pod не перезапускався після завершення
+  #    У Deployment restartPolicy завжди Always (і це не можна змінити)
+  restartPolicy: Never
+
+  # terminationGracePeriodSeconds — скільки секунд чекати на graceful shutdown
+  # Після kubectl delete pod: спочатку SIGTERM, потім (через N сек) SIGKILL
+  # За замовчуванням 30 секунд
+  terminationGracePeriodSeconds: 10
+
+# =============================================================================
+# ДІАГНОСТИЧНІ КОМАНДИ:
+#
+# Стан Pod'у:
+#   kubectl get pod weather-pod
+#   kubectl get pod weather-pod -o wide     # з IP та вузлом
+#   kubectl describe pod weather-pod        # детально + Events
+#
+# Логи:
+#   kubectl logs weather-pod
+#   kubectl logs weather-pod -f             # в реальному часі
+#   kubectl logs weather-pod --previous     # попередній запуск
+#
+# Виконати команду:
+#   kubectl exec weather-pod -- ls /
+#   kubectl exec -it weather-pod -- sh      # інтерактивна сесія
+#
+# ДЕМО:
+#   kubectl delete pod weather-pod          # видалити Pod
+#   kubectl get pods                        # Pod зник назавжди!
+# =============================================================================
