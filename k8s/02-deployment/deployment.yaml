@@ -1,0 +1,229 @@
+# =============================================================================
+# deployment.yaml — Deployment для WeatherApi
+# =============================================================================
+#
+# ЩО ЦЕ: Deployment — декларативний опис як розгорнути Pod'и.
+#         Управляє ReplicaSet'ами, що в свою чергу управляють Pod'ами.
+#         Забезпечує самовідновлення, масштабування і rolling updates.
+#
+# НАВІЩО: Вирішує три проблеми голого Pod'у:
+#         1. Самовідновлення: Pod впав -> ReplicaSet створює новий
+#         2. Масштабування: kubectl scale або редагування replicas
+#         3. Оновлення без простою: RollingUpdate стратегія
+#
+# ІЄРАРХІЯ:
+#   Deployment --> ReplicaSet --> Pod --> Container
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f deployment.yaml
+#   kubectl get deployments
+#   kubectl rollout status deployment/weather-api
+#   kubectl rollout undo deployment/weather-api
+# =============================================================================
+
+apiVersion: apps/v1   # Deployment живе в групі apps (не в core v1)
+kind: Deployment      # Тип об'єкту
+
+# ---------------------------------------------------------------------------
+# metadata — ідентифікація Deployment'у
+# ---------------------------------------------------------------------------
+metadata:
+  name: weather-api       # Ім'я Deployment'у (унікальне в namespace)
+  namespace: default      # Namespace (вивчимо в Уроці 8)
+
+  # Мітки на самому Deployment — для пошуку Deployment'у (не Pod'ів!)
+  labels:
+    app: weather-api
+    version: "1.0"
+
+  # Анотація для зручного перегляду history
+  # Заповни перед застосуванням: описує що змінилось в цій версії
+  # annotations:
+  #   kubernetes.io/change-cause: "перша версія: nginx:alpine"
+
+# ---------------------------------------------------------------------------
+# spec — бажаний стан Deployment'у
+# ---------------------------------------------------------------------------
+spec:
+
+  # replicas — скільки Pod'ів повинно бути запущено одночасно
+  # ReplicaSet постійно стежить щоб їх кількість дорівнювала цьому числу
+  # Якщо видалити поле — за замовчуванням 1
+  # Для production: 3+ для high availability (HA)
+  replicas: 3
+
+  # selector — як Deployment знаходить "свої" Pod'и
+  # КРИТИЧНО: повинен збігатись з template.metadata.labels
+  # НЕЗМІННИЙ після створення (immutable field)
+  # НЕ робіть так: змінювати selector у вже існуючого Deployment
+  selector:
+    matchLabels:
+      app: weather-api    # Шукати Pod'и з міткою app=weather-api
+
+  # strategy — як оновлювати Pod'и при зміні конфігурації
+  strategy:
+    type: RollingUpdate   # Альтернатива: Recreate (простій, але простіше)
+
+    rollingUpdate:
+      # maxSurge — скільки додаткових Pod'ів дозволено під час оновлення
+      # 1 означає: якщо replicas=3, в пік оновлення може бути 4 Pod'и
+      # Можна вказати у відсотках: "25%"
+      maxSurge: 1
+
+      # maxUnavailable — скільки Pod'ів можуть бути недоступні під час оновлення
+      # 0 означає: завжди мати мінімум replicas живих Pod'ів (нульовий простій)
+      # Якщо 0 і maxSurge 0 одночасно -- K8s відхилить (не може нічого зробити)
+      maxUnavailable: 0
+
+  # revisionHistoryLimit — скільки старих ReplicaSet'ів зберігати для rollback
+  # Кожен rollout створює новий ReplicaSet, старий залишається з 0 реплік
+  # Більше -- більше варіантів для відкату, але більше сміття в кластері
+  revisionHistoryLimit: 5   # за замовчуванням 10
+
+  # progressDeadlineSeconds — скільки секунд чекати прогресу оновлення
+  # Якщо за цей час не з'явились нові Pod'и -- Deployment позначається як Failed
+  # Корисно щоб не чекати вічно на зламаний deploy
+  progressDeadlineSeconds: 300   # 5 хвилин (за замовчуванням 600)
+
+  # ---------------------------------------------------------------------------
+  # template — шаблон Pod'у (ReplicaSet створює Pod'и за цим шаблоном)
+  # ---------------------------------------------------------------------------
+  template:
+    metadata:
+      # ОБОВ'ЯЗКОВО збігається з selector.matchLabels (може мати більше міток)
+      labels:
+        app: weather-api     # ця мітка обов'язкова -- selector шукає за нею
+        version: "1.0"       # додаткова мітка -- зручна для фільтрації
+
+    spec:
+      # ---------------------------------------------------------------------------
+      # Безпека: запускаємо як non-root
+      # В production завжди налаштовуй securityContext
+      # ---------------------------------------------------------------------------
+      securityContext:
+        runAsNonRoot: true        # забороняємо запуск від root
+        runAsUser: 1001           # конкретний UID (не root = не 0)
+        fsGroup: 1001             # GID для volumes
+
+      # ---------------------------------------------------------------------------
+      # containers — список контейнерів
+      # ---------------------------------------------------------------------------
+      containers:
+        - name: weather-api      # ім'я контейнера -- використовується в kubectl logs -c
+          image: nginx:alpine    # тимчасово nginx; замінимо на weather-api:1.0 пізніше
+
+          # imagePullPolicy — коли завантажувати образ
+          # IfNotPresent: не завантажувати якщо образ вже є на вузлі (рекомендовано)
+          # Always: завжди перевіряти registry (для :latest або debugging)
+          # НЕ робіть так в production: image: myapp:latest -- складно відкочуватись
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http            # ім'я порту -- Service може посилатись за іменем
+              containerPort: 80     # nginx слухає на 80
+              protocol: TCP
+
+          # ---------------------------------------------------------------------------
+          # Змінні середовища
+          # Зараз задані напряму; в Уроці 4 перенесемо в ConfigMap і Secret
+          # ---------------------------------------------------------------------------
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Development"
+
+            - name: ASPNETCORE_URLS
+              value: "http://+:80"
+
+            # Патерн для майбутнього (Урок 4):
+            # - name: ConnectionStrings__DefaultConnection
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: weather-secret
+            #       key: connection-string
+
+          # ---------------------------------------------------------------------------
+          # resources — запити і ліміти ресурсів
+          # Реалістичні значення для .NET Minimal API в dev-режимі
+          # В production збільши limits.memory до 512Mi або більше
+          # ---------------------------------------------------------------------------
+          resources:
+            requests:
+              memory: "128Mi"   # .NET стартує з ~80-100MB, даємо запас
+              cpu: "100m"       # 0.1 CPU в idle
+
+            limits:
+              memory: "256Mi"   # максимум: перевищення → OOMKilled
+              cpu: "500m"       # максимум: перевищення → throttling (не смерть)
+
+          # ---------------------------------------------------------------------------
+          # Health checks — вивчимо детально в Уроці 5
+          # Зараз закоментовані щоб deployment запустився без /health ендпоінтів
+          # ---------------------------------------------------------------------------
+
+          # livenessProbe — перевірка чи живий контейнер
+          # Якщо провалюється K limitCount разів -- контейнер вбивається і перезапускається
+          # livenessProbe:
+          #   httpGet:
+          #     path: /health/live
+          #     port: http         # посилання за іменем порту
+          #   initialDelaySeconds: 15   # чекати 15 сек після старту (поки .NET ініціалізується)
+          #   periodSeconds: 10         # перевіряти кожні 10 секунд
+          #   failureThreshold: 3       # 3 провали поспіль = контейнер мертвий
+          #   timeoutSeconds: 5         # таймаут на відповідь
+
+          # readinessProbe — перевірка чи готовий Pod приймати трафік
+          # Service надсилає трафік лише на Pod'и що пройшли readiness
+          # readinessProbe:
+          #   httpGet:
+          #     path: /health/ready
+          #     port: http
+          #   initialDelaySeconds: 5
+          #   periodSeconds: 5
+          #   failureThreshold: 3
+
+          # startupProbe -- окрема перевірка при першому старті (для повільного старту)
+          # Поки не пройде startupProbe, liveness не перевіряється
+          # startupProbe:
+          #   httpGet:
+          #     path: /health/live
+          #     port: http
+          #   failureThreshold: 30   # 30 * 10s = 5 хвилин на старт
+          #   periodSeconds: 10
+
+      # ---------------------------------------------------------------------------
+      # Налаштування планування Pod'ів
+      # ---------------------------------------------------------------------------
+
+      # terminationGracePeriodSeconds — час на graceful shutdown
+      # Після SIGTERM ваш додаток повинен закінчити поточні запити і зупинитись
+      # Після закінчення цього часу -- SIGKILL (примусове вбивство)
+      # Для .NET: переконайся що є обробник CancellationToken в BackgroundService
+      terminationGracePeriodSeconds: 30
+
+      # restartPolicy для Pod'ів під Deployment ЗАВЖДИ Always (фіксовано K8s)
+      # Не вказуємо явно -- defaults до Always і не можна змінити для Deployment
+
+# =============================================================================
+# КОРИСНІ КОМАНДИ:
+#
+# Статус розгортання:
+#   kubectl rollout status deployment/weather-api
+#
+# Масштабування:
+#   kubectl scale deployment weather-api --replicas=5
+#
+# Оновлення образу:
+#   kubectl set image deployment/weather-api weather-api=weather-api:2.0
+#   або: відредагуй image в цьому файлі та kubectl apply
+#
+# Перегляд ревізій:
+#   kubectl rollout history deployment weather-api
+#
+# Відкат:
+#   kubectl rollout undo deployment weather-api
+#   kubectl rollout undo deployment weather-api --to-revision=1
+#
+# Пауза і продовження rolling update:
+#   kubectl rollout pause deployment weather-api
+#   kubectl rollout resume deployment weather-api
+# =============================================================================

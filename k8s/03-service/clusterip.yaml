@@ -1,0 +1,102 @@
+# =============================================================================
+# clusterip.yaml — ClusterIP Service для WeatherApi
+# =============================================================================
+#
+# ЩО ЦЕ: Service типу ClusterIP — стабільна внутрішня точка доступу.
+#         ClusterIP — це віртуальна IP-адреса, що існує як правило iptables
+#         в ядрі кожного вузла. Жоден мережевий інтерфейс не має цієї IP.
+#         kube-proxy оновлює ці правила при зміні Endpoints.
+#
+# НАВІЩО: Pod'и мають ефемерні IP-адреси (змінюються при перестворенні).
+#         Service дає стабільне ім'я і IP, розподіляє трафік між Pod'ами.
+#
+# ДОСТУПНІСТЬ:
+#   Всередині кластеру:  YES (через ClusterIP або DNS)
+#   Ззовні кластеру:     NO
+#
+# DNS-ім'я Service'у: weather-api-svc.default.svc.cluster.local
+# Скорочено:          weather-api-svc (з того ж namespace)
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f clusterip.yaml
+#   kubectl get services
+#   kubectl get endpoints weather-api-svc
+# =============================================================================
+
+apiVersion: v1      # Service живе в core API (v1), не в apps
+kind: Service
+
+# ---------------------------------------------------------------------------
+# metadata — ідентифікація Service'у
+# ---------------------------------------------------------------------------
+metadata:
+  name: weather-api-svc    # Ім'я Service'у = частина DNS-імені
+                            # DNS: weather-api-svc.default.svc.cluster.local
+  namespace: default
+
+  labels:
+    app: weather-api        # Мітки на самому Service (для пошуку Service'ів)
+
+# ---------------------------------------------------------------------------
+# spec — що саме надає цей Service
+# ---------------------------------------------------------------------------
+spec:
+
+  # type — тип Service'у
+  # ClusterIP: внутрішній, тільки всередині кластеру (за замовчуванням)
+  # NodePort:  відкриває порт на кожному вузлі (ззовні доступно)
+  # LoadBalancer: запитує зовнішній LB у хмарного провайдера
+  # ExternalName: CNAME на зовнішній хост
+  type: ClusterIP
+
+  # selector — якими мітками знаходимо Pod'и
+  # Endpoints Controller постійно стежить за Pod'ами з цими мітками
+  # і оновлює список IP:port у Endpoints об'єкті
+  # ВАЖЛИВО: сюди потрапляють тільки Pod'и зі статусом Ready
+  selector:
+    app: weather-api        # збігається з labels у Deployment template
+
+  # ports — які порти відкриває Service і куди перенаправляє
+  ports:
+    - name: http            # ім'я порту -- зручно для Ingress і документації
+      protocol: TCP         # TCP або UDP (рідко SCTP)
+
+      # port -- порт на якому слухає Service (ClusterIP:port)
+      # Клієнти всередині кластеру звертаються на цей порт
+      port: 80
+
+      # targetPort -- порт на який перенаправляти в Pod'і
+      # Може не збігатись з port (наприклад, Pod на 8080, Service на 80)
+      # Може бути іменем порту: targetPort: http (якщо Pod оголосив ім'я)
+      # НЕ робіть так: targetPort 0 або targetPort без значення
+      targetPort: 80
+
+  # sessionAffinity -- прив'язка клієнта до одного Pod'у
+  # None:     без прив'язки, round-robin між Pod'ами (за замовчуванням)
+  # ClientIP: запити з одного IP завжди ідуть на той самий Pod
+  # Увага: стан краще зберігати в Redis/БД ніж покладатись на sessionAffinity
+  sessionAffinity: None
+
+  # clusterIP -- можна явно задати IP або дати K8s вибрати автоматично
+  # Якщо не задано -- K8s вибере з діапазону serviceSubnet
+  # Якщо clusterIP: None -- це Headless Service (без балансування)
+  # НЕ робіть так: задавати clusterIP вручну якщо не знаєш точно навіщо
+  # clusterIP: 10.96.45.123  # не рекомендується задавати явно
+
+# =============================================================================
+# ПЕРЕВІРКА:
+#
+# Список Services:
+#   kubectl get services
+#
+# Кому Service направляє трафік (Endpoints):
+#   kubectl get endpoints weather-api-svc
+#
+# Детальна інформація (включно з Endpoints):
+#   kubectl describe service weather-api-svc
+#
+# DNS перевірка зсередини Pod'у:
+#   kubectl run test --image=curlimages/curl --restart=Never --rm -it -- sh
+#   / # nslookup weather-api-svc
+#   / # curl http://weather-api-svc/
+# =============================================================================

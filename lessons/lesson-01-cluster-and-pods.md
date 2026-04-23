@@ -16,7 +16,7 @@
 5. [Перший кластер: що таке kind-config.yaml](#5-перший-кластер)
 6. [Pod — найменша одиниця Kubernetes](#6-pod--найменша-одиниця)
 7. [Практика: створюємо перший Pod](#7-практика-перший-pod)
-8. [🎯 ДЕМО: Pod без контролера не воскресає](#8-демо-pod-без-контролера)
+8. [ДЕМО: Pod без контролера не воскресає](#8-демо-pod-без-контролера)
 9. [Типові помилки початківців](#9-типові-помилки)
 10. [Підсумок і вправи](#10-підсумок-і-вправи)
 
@@ -99,29 +99,29 @@ Docker — найпопулярніший інструмент для робот
 │                    Kubernetes Кластер                   │
 │                                                         │
 │  ┌─────────────────────────────────────┐                │
-│  │         Control Plane (Мозок)       │               │
-│  │  ┌──────────┐  ┌──────────────────┐ │               │
-│  │  │API Server│  │      etcd        │ │               │
-│  │  │(вхідні  │  │  (база даних      │ │               │
-│  │  │ запити) │  │   кластеру)       │ │               │
-│  │  └──────────┘  └──────────────────┘ │               │
-│  │  ┌──────────┐  ┌──────────────────┐ │               │
-│  │  │Scheduler │  │Controller Manager│ │               │
-│  │  │(розподіл │  │(стежить за       │ │               │
-│  │  │  Pod'ів) │  │ станом)          │ │               │
-│  │  └──────────┘  └──────────────────┘ │               │
-│  └─────────────────────────────────────┘               │
+│  │         Control Plane (Мозок)       │                │
+│  │  ┌──────────┐  ┌──────────────────┐ │                │
+│  │  │API Server│  │      etcd        │ │                │
+│  │  │(вхідні   │  │  (база даних     │ │                │
+│  │  │ запити)  │  │   кластеру)      │ │                │
+│  │  └──────────┘  └──────────────────┘ │                │
+│  │  ┌──────────┐  ┌──────────────────┐ │                │ 
+│  │  │Scheduler │  │Controller Manager│ │                │
+│  │  │(розподіл │  │(стежить за       │ │                │
+│  │  │  Pod'ів) │  │ станом)          │ │                │
+│  │  └──────────┘  └──────────────────┘ │                │
+│  └─────────────────────────────────────┘                │
 │                                                         │
-│  ┌──────────────┐    ┌──────────────┐                  │
-│  │  Worker Node 1│    │ Worker Node 2│                  │
-│  │  ┌─────────┐ │    │ ┌─────────┐ │                  │
-│  │  │ kubelet │ │    │ │ kubelet │ │                  │
-│  │  └─────────┘ │    │ └─────────┘ │                  │
-│  │  ┌─────────┐ │    │ ┌─────────┐ │                  │
-│  │  │  Pod A  │ │    │ │  Pod B  │ │                  │
-│  │  │  Pod C  │ │    │ │  Pod D  │ │                  │
-│  │  └─────────┘ │    │ └─────────┘ │                  │
-│  └──────────────┘    └──────────────┘                  │
+│  ┌──────────────┐    ┌──────────────┐                   │
+│  │ Worker Node 1│    │ Worker Node 2│                   │
+│  │  ┌─────────┐ │    │ ┌─────────┐  │                   │
+│  │  │ kubelet │ │    │ │ kubelet │  │                   │
+│  │  └─────────┘ │    │ └─────────┘  │                   │
+│  │  ┌─────────┐ │    │ ┌─────────┐  │                   │
+│  │  │  Pod A  │ │    │ │  Pod B  │  │                   │
+│  │  │  Pod C  │ │    │ │  Pod D  │  │                   │
+│  │  └─────────┘ │    │ └─────────┘  │                   │
+│  └──────────────┘    └──────────────┘                   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -379,19 +379,17 @@ cd k8s-workshop
 
 # Створюємо кластер з конфігурації
 # Ця команда може зайняти 2-3 хвилини — завантажує Docker образи
-kind create cluster \
-  --name workshop \
-  --config k8s/00-cluster/kind-config.yaml
+kind create cluster --name workshop --config k8s/00-cluster/kind-config.yaml
 
 # Очікуваний вивід:
 # Creating cluster "workshop" ...
 #  ✓ Ensuring node image (kindest/node:v1.29.2) 🖼
-#  ✓ Preparing nodes 📦 📦 📦
-#  ✓ Writing configuration 📜
-#  ✓ Starting control-plane 🕹️
-#  ✓ Installing CNI 🔌
-#  ✓ Installing StorageClass 💾
-#  ✓ Joining worker nodes 🚜
+#  ✓ Preparing nodes 
+#  ✓ Writing configuration 
+#  ✓ Starting control-plane
+#  ✓ Installing CNI 
+#  ✓ Installing StorageClass
+#  ✓ Joining worker nodes 
 # Set kubectl context to "kind-workshop"
 ```
 
@@ -728,7 +726,7 @@ kubectl get pods -w
 
 ---
 
-## 8. 🎯 ДЕМО: Pod без контролера
+## 8. ДЕМО: Pod без контролера
 
 ### Чого ми хочемо довести
 
@@ -747,7 +745,7 @@ kubectl get pods
 ### Крок 2: Видаляємо Pod
 
 ```bash
-# 🎯 ДЕМО МОМЕНТ: Видаляємо Pod
+# ДЕМО МОМЕНТ: Видаляємо Pod
 kubectl delete pod weather-pod
 
 # Виведе: pod "weather-pod" deleted
@@ -792,7 +790,7 @@ kubectl delete pod weather-api-7d6b8f9c4-xk2pt   # Pod від Deployment
 
 ## 9. Типові помилки початківців
 
-### ❌ Помилка 1: ImagePullBackOff
+###  Помилка 1: ImagePullBackOff
 
 ```
 NAME          READY   STATUS             RESTARTS   AGE
@@ -815,7 +813,7 @@ kubectl describe pod weather-pod
 kind load docker-image weather-api:1.0 --name workshop
 ```
 
-### ❌ Помилка 2: Pending — не вистачає ресурсів
+###  Помилка 2: Pending — не вистачає ресурсів
 
 ```
 NAME          READY   STATUS    RESTARTS   AGE
@@ -833,7 +831,7 @@ kubectl describe pod weather-pod
 
 **Рішення:** Зменши `resources.requests.memory` або видали інші Pod'и.
 
-### ❌ Помилка 3: CrashLoopBackOff
+###  Помилка 3: CrashLoopBackOff
 
 ```
 NAME          READY   STATUS             RESTARTS   AGE
@@ -859,7 +857,7 @@ kubectl logs weather-pod --previous
 
 Kubernetes спеціально уповільнює перезапуски щоб не перевантажувати систему.
 
-### ❌ Помилка 4: Забути namespace
+###  Помилка 4: Забути namespace
 
 ```bash
 kubectl get pods
@@ -870,7 +868,7 @@ kubectl get pods --all-namespaces   # Показати всі namespace
 kubectl get pods -n kube-system     # Конкретний namespace
 ```
 
-### ❌ Помилка 5: Неправильні відступи в YAML
+###  Помилка 5: Неправильні відступи в YAML
 
 ```yaml
 # НЕПРАВИЛЬНО — Tab замість пробілів:
