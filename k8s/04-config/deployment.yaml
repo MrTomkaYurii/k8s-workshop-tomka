@@ -1,0 +1,149 @@
+# =============================================================================
+# deployment.yaml — Deployment з ConfigMap і Secret
+# =============================================================================
+#
+# ЩО ЗМІНИЛОСЬ порівняно з Уроком 2:
+#   - env vars більше не задані напряму (не value: "...")
+#   - ConfigMap підключений через envFrom (всі ключі одразу)
+#   - Secret підключений через envFrom (всі ключі одразу)
+#   - Окремі змінні перевизначені через valueFrom для ясності
+#
+# ПОРЯДОК ЗАСТОСУВАННЯ:
+#   kubectl apply -f configmap.yaml
+#   kubectl apply -f secret.yaml
+#   kubectl apply -f deployment.yaml
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-api
+  namespace: default
+  labels:
+    app: weather-api
+    version: "1.0"
+
+spec:
+  replicas: 3
+
+  selector:
+    matchLabels:
+      app: weather-api
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+
+  template:
+    metadata:
+      labels:
+        app: weather-api
+        version: "1.0"
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+
+      containers:
+        - name: weather-api
+          image: nginxinc/nginx-unprivileged:alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ---------------------------------------------------------------
+          # СПОСІБ 1: envFrom — підключити ВСІ ключі з ConfigMap / Secret
+          # Найпростіший варіант: кожен ключ стає змінною середовища
+          # ---------------------------------------------------------------
+          envFrom:
+            # Спочатку ConfigMap — несекретні налаштування
+            - configMapRef:
+                name: weather-api-config
+
+            # Потім Secret — якщо ключ є в обох, Secret перезаписує ConfigMap
+            - secretRef:
+                name: weather-api-secret
+
+          # ---------------------------------------------------------------
+          # СПОСІБ 2: env.valueFrom — окремі змінні з конкретних ключів
+          # Корисно коли потрібно: перейменувати ключ, або взяти 1-2 значення
+          # ---------------------------------------------------------------
+          env:
+            # Перейменування: ключ ConfigMap → інша змінна в контейнері
+            - name: APP_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-api-config
+                  key: ASPNETCORE_ENVIRONMENT
+
+            # Підстановка конкретного поля Secret
+            - name: DB_CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  name: weather-api-secret
+                  key: ConnectionStrings__DefaultConnection
+
+            # Поле самого Pod'у (downward API) — не ConfigMap, але корисно знати
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+          # ---------------------------------------------------------------
+          # СПОСІБ 3: volume — ConfigMap змонтований як файл
+          # Використовується для конфіг-файлів (nginx.conf, appsettings.json)
+          # ---------------------------------------------------------------
+          # volumeMounts:
+          #   - name: nginx-config
+          #     mountPath: /etc/nginx/conf.d/default.conf
+          #     subPath: nginx.conf    # тільки цей ключ із ConfigMap
+          #     readOnly: true
+
+      # Для volumeMounts потрібно оголосити volume:
+      # volumes:
+      #   - name: nginx-config
+      #     configMap:
+      #       name: weather-api-config
+
+      terminationGracePeriodSeconds: 30
+
+# =============================================================================
+# КОРИСНІ КОМАНДИ:
+#
+# Переглянути змінні в поточному Pod'і:
+#   kubectl exec -it <pod-name> -- env | sort
+#
+# Перевірити що ConfigMap застосувався:
+#   kubectl exec -it <pod-name> -- env | grep ASPNETCORE
+#
+# Оновити ConfigMap і перезапустити Pod'и:
+#   kubectl apply -f configmap.yaml
+#   kubectl rollout restart deployment weather-api
+#
+# Переглянути Secret (base64-декодовано):
+#   kubectl get secret weather-api-secret -o jsonpath='{.data}' | python3 -c \
+#     "import sys,json,base64; d=json.load(sys.stdin); [print(k,'=',base64.b64decode(v).decode()) for k,v in d.items()]"
+# =============================================================================

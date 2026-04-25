@@ -20,10 +20,10 @@
 | Урок | Тема | Що вивчаємо |
 |------|------|-------------|
 | [01](lessons/lesson-01-cluster-and-pods.md) | Кластер і Pod'и | kind, kubectl, перший Pod |
-| 02 | Deployment | ReplicaSet, самовідновлення, rolling update |
-| 03 | Services | ClusterIP, NodePort, DNS всередині кластеру |
-| 04 | Config і Secrets | ConfigMap, Secret, env vars з K8s |
-| 05 | Health Checks | liveness, readiness, CrashLoopBackOff демо |
+| [02](lessons/lesson-02-deployment.md) | Deployment | ReplicaSet, самовідновлення, rolling update |
+| [03](lessons/lesson-03-services.md) | Services | ClusterIP, NodePort, DNS всередині кластеру |
+| [04](lessons/lesson-04-config-and-secrets.md) | Config і Secrets | ConfigMap, Secret, env vars з K8s |
+| [05](lessons/lesson-05-health-checks.md) | Health Checks | liveness, readiness, CrashLoopBackOff демо |
 | 06 | Resources | requests/limits, OOMKilled демо |
 | 07 | StatefulSet | PostgreSQL, PVC, дані переживають смерть Pod'у |
 | 08 | RBAC | Namespace, ServiceAccount, Role |

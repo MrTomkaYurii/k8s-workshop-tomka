@@ -234,7 +234,7 @@ spec:
     spec:
       containers:
         - name: weather-api
-          image: nginx:alpine
+          image: nginxinc/nginx-unprivileged:alpine
 ```
 
 `template` — це шаблон Pod'у. Все що тут написано — ReplicaSet використовуватиме для створення кожного нового Pod'у. Зверни увагу: `template` не має поля `name` — імена Pod'ів генеруються автоматично (deployment-name + replicaset-hash + random).
@@ -668,7 +668,29 @@ kubectl describe pod weather-api-...-xxxxx
 kubectl rollout undo deployment weather-api
 ```
 
-### Помилка 5: "забули" про PodDisruptionBudget
+### Помилка 5: nginx:alpine падає з Permission denied при runAsNonRoot
+
+```
+nginx: [emerg] mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
+```
+
+Стандартний образ `nginx:alpine` очікує запуск від root і намагається писати у системні директорії `/var/cache/nginx/`. При `securityContext.runAsNonRoot: true` це призводить до CrashLoopBackOff.
+
+Рішення — використовувати `nginxinc/nginx-unprivileged:alpine`: офіційний образ nginx, спроектований для запуску без root. Він слухає на порті `8080` (не `80`, бо порти < 1024 — привілейовані).
+
+```yaml
+# НЕПРАВИЛЬНО -- падає при runAsNonRoot:
+image: nginx:alpine
+containerPort: 80
+
+# ПРАВИЛЬНО -- працює без root:
+image: nginxinc/nginx-unprivileged:alpine
+containerPort: 8080
+```
+
+Те саме стосується і production-образу вашого додатку: якщо `Dockerfile` запускає процес від root — додай `USER 1001` в кінці Dockerfile.
+
+### Помилка 6: "забули" про PodDisruptionBudget
 
 При масштабуванні до нуля або видаленні Deployment в production, якщо є PodDisruptionBudget (PDB) — операція може зависнути. PDB захищає від того щоб занадто багато Pod'ів вимкнулись одночасно. Якщо `maxUnavailable: 0` в PDB і ти хочеш видалити всі Pod'и — K8s не дасть. Вивчимо в Уроці 8.
 

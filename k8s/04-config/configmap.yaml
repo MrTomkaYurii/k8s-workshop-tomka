@@ -1,0 +1,63 @@
+# =============================================================================
+# configmap.yaml — несекретні налаштування WeatherApi
+# =============================================================================
+#
+# ЩО ЦЕ: ConfigMap — K8s об'єкт для несекретних конфігурацій.
+#         Відокремлює конфіг від коду і образу: змінити налаштування
+#         можна без rebuild Docker-образу.
+#
+# ПРАВИЛО: ConfigMap — для всього що можна побачити в git і в логах.
+#          Secret — для паролів і ключів (дивись secret.yaml).
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f configmap.yaml
+#   kubectl get configmap weather-api-config
+#   kubectl describe configmap weather-api-config
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weather-api-config
+  namespace: default
+  labels:
+    app: weather-api
+
+# data — словник ключ: "значення" (завжди рядки)
+data:
+
+  # --- ASP.NET Core runtime ---
+  ASPNETCORE_ENVIRONMENT: "Production"
+  ASPNETCORE_URLS: "http://+:8080"
+
+  # --- Рівні логування ---
+  # Формат: Logging__LogLevel__<Category> (подвійне підкреслення = розділ JSON)
+  Logging__LogLevel__Default: "Information"
+  Logging__LogLevel__Microsoft.AspNetCore: "Warning"
+  Logging__LogLevel__Microsoft.EntityFrameworkCore: "Warning"
+
+  # --- WeatherApi налаштування ---
+  WeatherApi__CacheTtlSeconds: "300"     # кешувати прогноз 5 хвилин
+  WeatherApi__MaxForecastDays: "7"       # максимум 7 днів прогнозу
+  WeatherApi__DefaultCity: "Kyiv"
+
+  # --- Redis (несекретно: тільки хост і порт, без пароля) ---
+  Redis__Host: "redis-service"
+  Redis__Port: "6379"
+  Redis__DatabaseIndex: "0"
+
+  # --- Feature flags ---
+  Features__EnableCaching: "true"
+  Features__EnableDetailedErrors: "false"    # true тільки в dev!
+
+  # ---------------------------------------------------------------------------
+  # АЛЬТЕРНАТИВА: зберігати цілий файл як значення ключа
+  # Зручно для nginx.conf, appsettings.json тощо
+  # ---------------------------------------------------------------------------
+  # nginx.conf: |
+  #   server {
+  #     listen 8080;
+  #     location /health/live  { return 200 "ok\n"; add_header Content-Type text/plain; }
+  #     location /health/ready { return 200 "ok\n"; add_header Content-Type text/plain; }
+  #     location / { proxy_pass http://localhost:8081; }
+  #   }

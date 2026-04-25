@@ -110,7 +110,7 @@ spec:
       # ---------------------------------------------------------------------------
       containers:
         - name: weather-api      # ім'я контейнера -- використовується в kubectl logs -c
-          image: nginx:alpine    # тимчасово nginx; замінимо на weather-api:1.0 пізніше
+          image: nginxinc/nginx-unprivileged:alpine    # non-root nginx; замінимо на weather-api:1.0 пізніше
 
           # imagePullPolicy — коли завантажувати образ
           # IfNotPresent: не завантажувати якщо образ вже є на вузлі (рекомендовано)
@@ -120,7 +120,7 @@ spec:
 
           ports:
             - name: http            # ім'я порту -- Service може посилатись за іменем
-              containerPort: 80     # nginx слухає на 80
+              containerPort: 8080   # nginx-unprivileged слухає на 8080 (не на привілейованому 80)
               protocol: TCP
 
           # ---------------------------------------------------------------------------

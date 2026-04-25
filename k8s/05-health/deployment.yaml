@@ -1,0 +1,169 @@
+# =============================================================================
+# deployment.yaml — Deployment з health check проbami
+# =============================================================================
+#
+# ЩО ЗМІНИЛОСЬ порівняно з Уроком 4:
+#   - Додано livenessProbe  — K8s вбиває і перезапускає контейнер якщо "мертвий"
+#   - Додано readinessProbe — K8s виключає Pod з Service якщо "не готовий"
+#   - Додано startupProbe   — затримка перед першим liveness для повільного старту
+#
+# ПОРЯДОК ЗАСТОСУВАННЯ:
+#   kubectl apply -f ../04-config/configmap.yaml
+#   kubectl apply -f ../04-config/secret.yaml
+#   kubectl apply -f deployment.yaml
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-api
+  namespace: default
+  labels:
+    app: weather-api
+    version: "1.0"
+
+spec:
+  replicas: 3
+
+  selector:
+    matchLabels:
+      app: weather-api
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+
+  template:
+    metadata:
+      labels:
+        app: weather-api
+        version: "1.0"
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+
+      containers:
+        - name: weather-api
+          image: nginxinc/nginx-unprivileged:alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: weather-api-config
+            - secretRef:
+                name: weather-api-secret
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+          # ---------------------------------------------------------------
+          # startupProbe — перевірка при першому старті
+          #
+          # НАВІЩО: .NET додатки стартують 5-30 секунд (компіляція, DI-контейнер,
+          #         підключення до БД, прогрів кешу). Якщо запустити livenessProbe
+          #         одразу — K8s вирішить що Pod мертвий і вб'є його ще до старту.
+          #
+          # ЯК ПРАЦЮЄ: поки startupProbe не поверне 200, liveness і readiness
+          #             НЕ перевіряються. Тільки після успішного startup вони вмикаються.
+          #
+          # Максимальний час на старт: failureThreshold * periodSeconds = 30 * 10s = 5 хв
+          # ---------------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /         # nginx:unprivileged повертає 200 на /
+              port: http      # посилання за іменем порту (http = 8080)
+            initialDelaySeconds: 5     # чекати 5 сек після запуску контейнера
+            periodSeconds: 10          # перевіряти кожні 10 секунд
+            failureThreshold: 30       # 30 * 10s = 5 хвилин на старт
+            successThreshold: 1        # одного успіху достатньо
+            timeoutSeconds: 5          # таймаут відповіді
+
+          # ---------------------------------------------------------------
+          # livenessProbe — чи живий контейнер?
+          #
+          # НАВІЩО: .NET може зависнути в дедлоку, пережити OOM частково,
+          #         або увійти в стан де запити зависають вічно.
+          #         Контейнер технічно "запущений", але насправді мертвий.
+          #
+          # ЯК ПРАЦЮЄ: якщо probe повертає не 2xx failureThreshold разів поспіль
+          #             → K8s вбиває контейнер і запускає новий.
+          #
+          # ДЛЯ WeatherApi: /health/live — мінімальна перевірка "процес живий"
+          #                 не перевіряє БД, кеш тощо (це для readiness)
+          # ---------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /         # для реального WeatherApi: /health/live
+              port: http
+            initialDelaySeconds: 0     # startupProbe вже відпрацював — чекати не треба
+            periodSeconds: 15          # перевіряти кожні 15 секунд
+            failureThreshold: 3        # 3 * 15s = 45 сек перед рестартом
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          # ---------------------------------------------------------------
+          # readinessProbe — чи готовий Pod приймати трафік?
+          #
+          # НАВІЩО: після старту .NET додатку потрібен час на:
+          #         - підключення до PostgreSQL
+          #         - підключення до Redis
+          #         - прогрів кешу
+          #         Поки не готовий — Service не повинен надсилати запити.
+          #
+          # ЯК ПРАЦЮЄ: якщо probe не проходить → Pod виключається з Endpoints
+          #             Service. Трафік не надходить. Pod НЕ перезапускається.
+          #             Як тільки probe пройде — Pod знову включається.
+          #
+          # РІЗНИЦЯ від liveness: liveness = "вбити і перезапустити"
+          #                       readiness = "ізолювати від трафіку"
+          #
+          # ДЛЯ WeatherApi: /health/ready — перевіряє з'єднання з БД і Redis
+          # ---------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /         # для реального WeatherApi: /health/ready
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 10          # частіше ніж liveness: швидко реагуємо
+            failureThreshold: 3        # 3 * 10s = 30 сек до ізоляції
+            successThreshold: 1
+            timeoutSeconds: 3          # коротший таймаут: якщо тормозить — вже проблема
+
+      terminationGracePeriodSeconds: 30
+
+# =============================================================================
+# КОРИСНІ КОМАНДИ:
+#
+# Подивитись стан probe:
+#   kubectl describe pod <pod-name>      # Events секція покаже Liveness probe failed
+#   kubectl get pod <pod-name> -o wide   # READY: 0/1 якщо readiness не проходить
+#
+# Стежити за рестартами:
+#   kubectl get pods -w
+#
+# ДЕМО CrashLoopBackOff — тимчасово зламати liveness:
+#   kubectl set env deployment/weather-api BREAK_LIVENESS=true
+#   (або змінити livenessProbe.httpGet.path на /nonexistent)
+#
+# Перевірити health endpoint вручну:
+#   kubectl exec -it <pod-name> -- wget -qO- http://localhost:8080/
+#   kubectl exec -it <pod-name> -- wget -qO- http://localhost:8080/health/live
+# =============================================================================
