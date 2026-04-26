@@ -1,0 +1,68 @@
+# =============================================================================
+# postgres-client-svc.yaml — ClusterIP Service для клієнтських підключень
+# =============================================================================
+#
+# ЩО ЦЕ: Звичайний ClusterIP Service для зовнішніх клієнтів (WeatherApi).
+#
+# НАВІЩО ДВА SERVICE'И:
+#   postgres-headless (clusterIP: None):
+#     → для внутрішньої комунікації між Pod'ами StatefulSet
+#     → дає стабільні DNS-імена postgres-0.postgres-headless...
+#
+#   postgres-svc (ClusterIP):
+#     → для WeatherApi і інших клієнтів
+#     → балансує між Pod'ами (корисно для read replicas)
+#     → стабільна точка входу незалежно від кількості реплік
+#
+# CONNECTION STRING в WeatherApi (Урок 4):
+#   Host=postgres-svc;Port=5432;Database=weatherdb;Username=weather_user
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f postgres-client-svc.yaml
+#   kubectl get svc postgres-svc
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-svc         # це ім'я використовується в connection string
+  namespace: default
+  labels:
+    app: postgres
+    lesson: "07"
+
+spec:
+  type: ClusterIP            # доступний тільки всередині кластеру
+
+  selector:
+    app: postgres            # знаходить Pod'и StatefulSet
+
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+
+  # sessionAffinity: None — round-robin між усіма Pod'ами
+  # Для read-write workload в production: направляй тільки на master
+  # (один Pod, наприклад через headless service з конкретним іменем)
+  sessionAffinity: None
+
+# =============================================================================
+# ВИКОРИСТАННЯ В WEATHERAPI:
+#
+# appsettings.json / ConfigMap:
+#   ConnectionStrings__DefaultConnection =
+#     "Host=postgres-svc;Port=5432;Database=weatherdb;Username=weather_user;Password=..."
+#
+# WeatherApi підключиться до postgres-svc → Service перенаправить
+# на один з Pod'ів StatefulSet (postgres-0 якщо одна репліка).
+#
+# ПЕРЕВІРКА з'єднання:
+#   kubectl run psql-test \
+#     --image=postgres:16-alpine \
+#     --restart=Never \
+#     --rm -it \
+#     --env="PGPASSWORD=workshop-pg-password" \
+#     -- psql -h postgres-svc -U weather_user -d weatherdb -c "SELECT version();"
+# =============================================================================

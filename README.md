@@ -24,8 +24,8 @@
 | [03](lessons/lesson-03-services.md) | Services | ClusterIP, NodePort, DNS всередині кластеру |
 | [04](lessons/lesson-04-config-and-secrets.md) | Config і Secrets | ConfigMap, Secret, env vars з K8s |
 | [05](lessons/lesson-05-health-checks.md) | Health Checks | liveness, readiness, CrashLoopBackOff демо |
-| 06 | Resources | requests/limits, OOMKilled демо |
-| 07 | StatefulSet | PostgreSQL, PVC, дані переживають смерть Pod'у |
+| [06](lessons/lesson-06-resources.md) | Resources | requests/limits, QoS класи, OOMKilled демо, LimitRange, ResourceQuota |
+| [07](lessons/lesson-07-statefulset.md) | StatefulSet | PostgreSQL, PVC, StorageClass, дані переживають смерть Pod'у |
 | 08 | RBAC | Namespace, ServiceAccount, Role |
 | 09 | Ingress | nginx ingress, routing, TLS |
 | 10 | HPA | Автомасштабування, метрики, load generator |

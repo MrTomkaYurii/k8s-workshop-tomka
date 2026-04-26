@@ -1,0 +1,87 @@
+# =============================================================================
+# limitrange.yaml — Дефолтні та граничні ресурси для namespace
+# =============================================================================
+#
+# ЩО ЦЕ: LimitRange встановлює дефолтні requests/limits для Pod'ів
+#         у namespace що не вказали свої resources.
+#         Також встановлює мінімальні та максимальні значення.
+#
+# НАВІЩО: Захист від Pod'ів без resources (BestEffort QoS).
+#         Якщо розробник забув вказати resources — LimitRange
+#         автоматично підставляє безпечні дефолти.
+#         Якщо Pod запитує занадто багато — LimitRange відхиляє.
+#
+# ВАЖЛИВО:
+#   - Застосовується тільки до НОВИХ Pod'ів (існуючі не змінюються)
+#   - Pod з явними resources — LimitRange їх не змінює (якщо в межах min/max)
+#   - Pod без resources — отримує default і defaultRequest
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f limitrange.yaml
+#   kubectl describe limitrange default-resource-limits
+# =============================================================================
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-resource-limits
+  namespace: default
+  labels:
+    lesson: "06"
+
+spec:
+  limits:
+
+    # -------------------------------------------------------------------------
+    # Container — обмеження на рівні контейнера
+    # -------------------------------------------------------------------------
+    - type: Container
+
+      # default — що підставляється якщо limits НЕ вказані
+      # Pod без limits отримає ці значення автоматично
+      default:
+        cpu: "500m"
+        memory: "256Mi"
+
+      # defaultRequest — що підставляється якщо requests НЕ вказані
+      # Pod без requests отримає ці значення автоматично
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+
+      # max — Pod не може попросити більше ніж це (limits.X <= max.X)
+      # Якщо Pod вказує більше — K8s відхилить Pod (Forbidden)
+      max:
+        cpu: "2"
+        memory: "2Gi"
+
+      # min — Pod не може попросити менше ніж це (requests.X >= min.X)
+      # Захист від занадто малих requests що "обманюють" Scheduler
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+
+    # -------------------------------------------------------------------------
+    # Pod — обмеження на рівень Pod'у (сума всіх контейнерів)
+    # -------------------------------------------------------------------------
+    - type: Pod
+      max:
+        cpu: "4"          # Весь Pod не може використати більше 4 CPU
+        memory: "4Gi"     # Весь Pod не може використати більше 4Gi
+
+# =============================================================================
+# ЯК ПЕРЕВІРИТИ:
+#
+# Переглянути LimitRange:
+#   kubectl describe limitrange default-resource-limits
+#
+# Тест: Pod без resources отримує дефолти:
+#   kubectl run test --image=nginx:alpine --restart=Never
+#   kubectl get pod test -o jsonpath='{.spec.containers[0].resources}'
+#   → побачиш requests і limits з defaultRequest/default
+#   kubectl delete pod test
+#
+# Тест: Pod з занадто великим limits відхиляється:
+#   kubectl run big --image=nginx:alpine --restart=Never --limits='memory=10Gi'
+#   → Error: maximum memory usage per Container is 2Gi, but limit is 10Gi.
+# =============================================================================

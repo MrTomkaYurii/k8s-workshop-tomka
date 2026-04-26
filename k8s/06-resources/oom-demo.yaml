@@ -1,0 +1,81 @@
+# =============================================================================
+# oom-demo.yaml — Демонстрація OOMKilled
+# =============================================================================
+#
+# ЩО ЦЕ: Pod що навмисно перевищує memory limit.
+#         Використовує утиліту stress для виділення 200MB RAM
+#         при ліміті 100Mi → Linux kernel OOMKilled процес.
+#
+# НАВІЩО: Показати що відбувається при перевищенні limits.memory:
+#         - exit code: 137 (128 + SIGKILL)
+#         - STATUS:    OOMKilled
+#         - RESTARTS:  зростає (restartPolicy: OnFailure)
+#
+# ДЕМО:
+#   kubectl apply -f oom-demo.yaml
+#   kubectl get pods --watch
+#   kubectl describe pod oom-demo   (дивись Last State: OOMKilled, Exit Code: 137)
+#
+# ПІСЛЯ ДЕМО:
+#   kubectl delete pod oom-demo
+# =============================================================================
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-demo
+  namespace: default
+  labels:
+    demo: oom-killed
+    lesson: "06"
+  annotations:
+    description: "Демо OOMKilled: stress виділяє 200M, ліміт 100Mi → смерть"
+
+spec:
+  containers:
+    - name: memory-eater
+      # polinux/stress — утиліта для навантажувального тестування
+      # --vm 1        — запустити 1 worker що виділяє пам'ять
+      # --vm-bytes 200M — виділити 200MB (> limits.memory: 100Mi → OOMKilled)
+      # --vm-hang 1   — після виділення тримати пам'ять 1 секунду (не відпускати)
+      image: polinux/stress
+
+      command: ["stress"]
+      args:
+        - "--vm"
+        - "1"
+        - "--vm-bytes"
+        - "200M"    # 200MB > 100Mi ліміт → OOMKilled
+        - "--vm-hang"
+        - "1"
+
+      resources:
+        requests:
+          memory: "64Mi"    # Scheduler резервує 64Mi на вузлі
+          cpu: "100m"
+        limits:
+          memory: "100Mi"   # Жорстка стеля: 200M > 100Mi → OOMKilled
+          cpu: "200m"
+
+  # OnFailure: K8s перезапускатиме Pod після OOMKill
+  # Дозволяє спостерігати за RESTARTS і CrashLoopBackOff
+  restartPolicy: OnFailure
+
+# =============================================================================
+# ЩО ПОБАЧИМО:
+#
+# kubectl get pod oom-demo
+#   NAME       READY   STATUS      RESTARTS   AGE
+#   oom-demo   0/1     OOMKilled   0          5s
+#   oom-demo   0/1     OOMKilled   1          15s   ← перезапуск
+#   oom-demo   0/1     OOMKilled   2          30s   ← знову
+#   oom-demo   0/1     CrashLoopBackOff  3    60s   ← K8s уповільнює перезапуски
+#
+# kubectl describe pod oom-demo:
+#   Last State:     Terminated
+#     Reason:       OOMKilled
+#     Exit Code:    137            ← 128 + SIGKILL(9) = 137
+#     Finished:     ...
+#
+# Порівняй: якщо збільшити limits.memory до 300Mi — Pod виживає!
+# =============================================================================

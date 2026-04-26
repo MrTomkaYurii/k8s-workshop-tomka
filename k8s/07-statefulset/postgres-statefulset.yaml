@@ -1,0 +1,264 @@
+# =============================================================================
+# postgres-statefulset.yaml — PostgreSQL на StatefulSet
+# =============================================================================
+#
+# ЩО ЦЕ: StatefulSet для PostgreSQL 16.
+#         Один Pod (master) для демо. В production: 3+ Pod'и з реплікацією.
+#
+# КЛЮЧОВІ ВІДМІННОСТІ від Deployment:
+#   1. spec.serviceName: посилання на Headless Service (обов'язково)
+#   2. Стабільні імена Pod'ів: postgres-0, postgres-1, ...
+#   3. VolumeClaimTemplates: кожен Pod отримує власний PVC
+#   4. Порядковий запуск: postgres-0 → postgres-1 → ...
+#   5. Зворотний порядок зупинки: ...postgres-1 → postgres-0
+#
+# ПОРЯДОК ЗАСТОСУВАННЯ:
+#   kubectl apply -f postgres-secret.yaml
+#   kubectl apply -f postgres-headless-svc.yaml
+#   kubectl apply -f postgres-client-svc.yaml
+#   kubectl apply -f postgres-statefulset.yaml
+#
+# ДЕМО ВИЖИВАННЯ ДАНИХ:
+#   kubectl exec -it postgres-0 -- psql -U weather_user -d weatherdb
+#   > CREATE TABLE test (id serial, val text);
+#   > INSERT INTO test (val) VALUES ('data survives!');
+#   > \q
+#   kubectl delete pod postgres-0
+#   kubectl exec -it postgres-0 -- psql -U weather_user -d weatherdb -c "SELECT * FROM test;"
+#   → дані збереглись!
+# =============================================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: default
+  labels:
+    app: postgres
+    version: "16"
+    lesson: "07"
+
+spec:
+  # ---------------------------------------------------------------------------
+  # serviceName — ОБОВ'ЯЗКОВЕ поле
+  # Ім'я Headless Service що дає Pod'ам стабільні DNS записи.
+  # Формат DNS: <pod-name>.<serviceName>.<namespace>.svc.cluster.local
+  # Приклад:    postgres-0.postgres-headless.default.svc.cluster.local
+  # ---------------------------------------------------------------------------
+  serviceName: postgres-headless
+
+  # Для демо: 1 Pod (master).
+  # Щоб побачити порядковий запуск: збільши до 3.
+  replicas: 1
+
+  # ---------------------------------------------------------------------------
+  # selector — як StatefulSet знаходить свої Pod'и
+  # Повинен збігатись з template.metadata.labels
+  # ---------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: postgres
+
+  # ---------------------------------------------------------------------------
+  # podManagementPolicy — порядок запуску і зупинки Pod'ів
+  #
+  # OrderedReady (за замовчуванням):
+  #   Запуск:  postgres-0 → (wait Ready) → postgres-1 → (wait Ready) → ...
+  #   Зупинка: postgres-2 → postgres-1 → postgres-0
+  #   Потрібно для PostgreSQL реплікації (master стартує першим)
+  #
+  # Parallel:
+  #   Всі Pod'и стартують і зупиняються одночасно
+  #   Для Cassandra, деяких NoSQL
+  # ---------------------------------------------------------------------------
+  podManagementPolicy: OrderedReady
+
+  # ---------------------------------------------------------------------------
+  # updateStrategy — як оновлювати Pod'и при зміні конфігурації
+  #
+  # RollingUpdate (за замовчуванням):
+  #   Оновлює Pod'и по черзі від N до 0 (зворотній порядок)
+  #   partition: N — зупинитись після оновлення Pod'ів від N до replicas-1
+  #               (корисно для поступового оновлення кластерних БД)
+  # ---------------------------------------------------------------------------
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0   # оновлювати всі Pod'и (0 = без partition)
+
+  template:
+    metadata:
+      labels:
+        app: postgres
+        version: "16"
+
+    spec:
+      # -----------------------------------------------------------------------
+      # Безпека: PostgreSQL офіційний образ може запускатись від різних UID.
+      # postgres:16-alpine за замовчуванням запускає процес від UID 999 (postgres).
+      # -----------------------------------------------------------------------
+      securityContext:
+        fsGroup: 999      # GID для volume — файли будуть доступні процесу postgres
+
+      # Чекати поки Headless Service з'явиться в DNS перед запуском Pod'у
+      # Не критично для одного Pod'у, важливо при повному перезапуску кластеру
+      subdomain: postgres-headless
+
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+
+          # -------------------------------------------------------------------
+          # Змінні середовища PostgreSQL
+          # -------------------------------------------------------------------
+          env:
+            # Ім'я бази даних що буде автоматично створена при першому старті
+            - name: POSTGRES_DB
+              value: weatherdb
+
+            # Ім'я суперuser (за замовчуванням: postgres)
+            # Використовується в connection string WeatherApi
+            - name: POSTGRES_USER
+              value: weather_user
+
+            # Пароль суперuser — з Secret (не в YAML!)
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+
+            # -------------------------------------------------------------------
+            # PGDATA — КРИТИЧНО ВАЖЛИВО для kind!
+            #
+            # Проблема: kind's local-path provisioner монтує volume і там є
+            # директорія lost+found. PostgreSQL відмовляється ініціалізуватись
+            # в непорожній директорії.
+            #
+            # Рішення: вказати PGDATA в піддиректорію (/data/pgdata),
+            # а не в корінь mount (/data). У піддиректорії порожньо — OK.
+            # -------------------------------------------------------------------
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          # -------------------------------------------------------------------
+          # Health Checks для PostgreSQL
+          # -------------------------------------------------------------------
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - weather_user
+                - -d
+                - weatherdb
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30      # 30 * 5s = 2.5 хвилини на ініціалізацію
+            timeoutSeconds: 5
+
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - weather_user
+                - -d
+                - weatherdb
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - weather_user
+                - -d
+                - weatherdb
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # -------------------------------------------------------------------
+          # Resources — Guaranteed QoS для БД (requests == limits)
+          # -------------------------------------------------------------------
+          resources:
+            requests:
+              memory: "256Mi"    # PostgreSQL idle: ~50-80MB, даємо запас
+              cpu: "250m"        # idle: ~10m, при запитах: 200-500m
+            limits:
+              memory: "512Mi"    # для воркшопу: 512Mi достатньо
+              cpu: "500m"        # для production: більше
+
+          # -------------------------------------------------------------------
+          # Volume mount — куди монтується PVC
+          # -------------------------------------------------------------------
+          volumeMounts:
+            - name: postgres-data     # ім'я з volumeClaimTemplates
+              mountPath: /var/lib/postgresql/data   # PostgreSQL шукає дані тут
+
+      # Pod'у дається 60 секунд на graceful shutdown
+      # PostgreSQL: checkpoint, запис WAL на диск, закриття підключень
+      terminationGracePeriodSeconds: 60
+
+  # ---------------------------------------------------------------------------
+  # volumeClaimTemplates — шаблон для автоматичного створення PVC
+  #
+  # При replicas: 1 → створить один PVC: postgres-data-postgres-0
+  # При replicas: 3 → три PVC: postgres-data-postgres-0,
+  #                             postgres-data-postgres-1,
+  #                             postgres-data-postgres-2
+  #
+  # PVC ЗАЛИШАЮТЬСЯ при видаленні Pod'ів і навіть при видаленні StatefulSet!
+  # Видалити вручну: kubectl delete pvc -l app=postgres
+  # ---------------------------------------------------------------------------
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data        # PVC буде: postgres-data-<pod-name>
+        labels:
+          app: postgres
+      spec:
+        accessModes:
+          - ReadWriteOnce           # тільки один вузол може писати (PostgreSQL)
+        storageClassName: standard  # kind's default StorageClass (local-path)
+        resources:
+          requests:
+            storage: 1Gi           # для воркшопу: 1Gi достатньо
+
+# =============================================================================
+# КОРИСНІ КОМАНДИ:
+#
+# Статус StatefulSet:
+#   kubectl get statefulset postgres
+#   kubectl describe statefulset postgres
+#
+# PVC (один на кожен Pod):
+#   kubectl get pvc
+#   kubectl describe pvc postgres-data-postgres-0
+#
+# Підключення до PostgreSQL:
+#   kubectl exec -it postgres-0 -- psql -U weather_user -d weatherdb
+#
+# Логи:
+#   kubectl logs postgres-0
+#   kubectl logs postgres-0 -f
+#
+# Масштабування (порядок спостерігай через --watch):
+#   kubectl scale statefulset postgres --replicas=3
+#   kubectl get pods --watch
+#
+# Rolling update:
+#   kubectl rollout status statefulset postgres
+#   kubectl rollout history statefulset postgres
+#   kubectl rollout undo statefulset postgres
+# =============================================================================

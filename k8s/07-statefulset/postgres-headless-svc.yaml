@@ -1,0 +1,77 @@
+# =============================================================================
+# postgres-headless-svc.yaml — Headless Service для StatefulSet
+# =============================================================================
+#
+# ЩО ЦЕ: Headless Service (clusterIP: None) для StatefulSet postgres.
+#
+# НАВІЩО: StatefulSet потребує Headless Service щоб надати кожному Pod'у
+#         стабільне DNS-ім'я:
+#         postgres-0.postgres-headless.default.svc.cluster.local
+#         postgres-1.postgres-headless.default.svc.cluster.local
+#
+# ЯК ВІДРІЗНЯЄТЬСЯ від звичайного Service:
+#   Звичайний ClusterIP:
+#     nslookup postgres-headless → 10.96.45.123 (один VIP)
+#
+#   Headless (clusterIP: None):
+#     nslookup postgres-headless → 10.244.1.5, 10.244.2.3 (IP Pod'ів напряму)
+#     nslookup postgres-0.postgres-headless → 10.244.1.5 (конкретний Pod)
+#
+# ОБОВ'ЯЗКОВО: spec.serviceName в StatefulSet повинен посилатись
+#              на ім'я цього Service ('postgres-headless')
+#
+# ВИКОРИСТАННЯ:
+#   kubectl apply -f postgres-headless-svc.yaml
+#   kubectl get svc postgres-headless
+#   # CLUSTER-IP буде "<none>" — це нормально для headless
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless    # StatefulSet.spec.serviceName посилається на це ім'я
+  namespace: default
+  labels:
+    app: postgres
+    lesson: "07"
+
+spec:
+  # clusterIP: None — це і є headless service
+  # Без балансування, без VIP
+  # DNS повертає IP Pod'ів напряму
+  clusterIP: None
+
+  selector:
+    app: postgres    # знаходимо Pod'и StatefulSet за цією міткою
+
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+
+  # publishNotReadyAddresses: true
+  # Включати Pod'и в DNS навіть якщо вони ще NOT Ready.
+  #
+  # НАВІЩО: При ініціалізації кластеру postgres-1 повинен підключитись
+  # до postgres-0 (master) ще до того як postgres-0 пройшов readinessProbe.
+  # Без цього прапорця pod-0 не буде в DNS і replica не зможе знайти master.
+  #
+  # ДЛЯ ВИРОБНИЦТВА з реплікацією: publishNotReadyAddresses: true обов'язково
+  # ДЛЯ ОДНОГО ВУЗЛА (replicas: 1): не критично, але не шкодить
+  publishNotReadyAddresses: true
+
+# =============================================================================
+# DNS ЗАПИСИ ЩО СТВОРИТЬСЯ (для StatefulSet postgres з 1 реплікою):
+#
+#   postgres-headless.default.svc.cluster.local
+#     → 10.244.1.5 (IP postgres-0)
+#
+#   postgres-0.postgres-headless.default.svc.cluster.local
+#     → 10.244.1.5 (завжди postgres-0, навіть після рестарту з новим IP)
+#
+# ПЕРЕВІРКА зсередині кластеру:
+#   kubectl run test --image=busybox:1.36 --restart=Never --rm -it -- sh
+#   # nslookup postgres-0.postgres-headless
+#   # nslookup postgres-headless
+# =============================================================================

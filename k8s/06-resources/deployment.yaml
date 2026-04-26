@@ -1,0 +1,150 @@
+# =============================================================================
+# deployment.yaml — Deployment з Guaranteed QoS resources
+# =============================================================================
+#
+# ЩО ЗМІНИЛОСЬ порівняно з Уроком 5:
+#   - requests.memory == limits.memory  → QoS клас: Guaranteed
+#   - requests.cpu    == limits.cpu     → QoS клас: Guaranteed
+#   - Pod буде евіктований ОСТАННІМ при нестачі ресурсів на вузлі
+#
+# QoS КЛАСИ:
+#   Guaranteed: requests == limits (обидва ресурси, всі контейнери)
+#               → вбивається останнім при memory pressure
+#   Burstable:  requests != limits (або відсутні limits у деяких контейнерів)
+#               → вбивається другим
+#   BestEffort: немає requests і limits
+#               → вбивається першим
+#
+# ПОРЯДОК ЗАСТОСУВАННЯ:
+#   kubectl apply -f ../04-config/configmap.yaml
+#   kubectl apply -f ../04-config/secret.yaml
+#   kubectl apply -f deployment.yaml
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-api
+  namespace: default
+  labels:
+    app: weather-api
+    version: "1.0"
+    lesson: "06"
+
+spec:
+  replicas: 3
+
+  selector:
+    matchLabels:
+      app: weather-api
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+
+  template:
+    metadata:
+      labels:
+        app: weather-api
+        version: "1.0"
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+
+      containers:
+        - name: weather-api
+          image: nginxinc/nginx-unprivileged:alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: weather-api-config
+                optional: true   # не падати якщо ConfigMap відсутній (для standalone demo)
+            - secretRef:
+                name: weather-api-secret
+                optional: true   # не падати якщо Secret відсутній
+
+          # ---------------------------------------------------------------
+          # GUARANTEED QoS: requests == limits для CPU і Memory
+          #
+          # Навіщо Guaranteed для weather-api:
+          #   - Платіжний/критичний сервіс → не повинен бути евіктований
+          #   - Передбачувана продуктивність: без CPU burst і throttling
+          #   - Scheduler точно знає скільки резервувати
+          #
+          # Недолік Guaranteed:
+          #   - Не може "вибухнути" при піковому навантаженні
+          #   - Займає більше зарезервованих ресурсів ніж Burstable
+          #   - Менше Pod'ів поміститься на вузол
+          #
+          # Для більшості web-сервісів: Burstable (requests < limits) краще.
+          # Для critical path сервісів: Guaranteed надійніше.
+          # ---------------------------------------------------------------
+          resources:
+            requests:
+              memory: "256Mi"   # для .NET з підключенням до БД
+              cpu: "250m"       # 0.25 ядра — достатньо для nginx/api
+            limits:
+              memory: "256Mi"   # == requests → Guaranteed QoS
+              cpu: "250m"       # == requests → Guaranteed QoS
+
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 3
+
+      terminationGracePeriodSeconds: 30
+
+# =============================================================================
+# ПЕРЕВІРКА QoS КЛАСУ:
+#
+#   kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
+#   → Guaranteed
+#
+# ПОРІВНЯННЯ QoS:
+#   Guaranteed: requests == limits (цей файл)
+#   Burstable:  змінити limits.memory на 512Mi (requests 256Mi != limits 512Mi)
+#   BestEffort: видалити секцію resources повністю
+#
+# ПЕРЕВІРКА SPOTS СПОЖИВАННЯ (якщо metrics-server встановлено):
+#   kubectl top pods -l app=weather-api
+#   kubectl top pods --containers
+# =============================================================================
